@@ -19,6 +19,7 @@ with shaded planets
 - Phosphor-glow trails via per-frame intensity decay
 - Day/night shading: the side of each planet facing away from the sun is darkened
 - Planet and orbit sizes scale with terminal dimensions
+- Color theme support: built-in `dark`/`light` themes or `ansi` to use the terminal's own palette (Catppuccin, Dracula, Solarized, …)
 - Intro and supernova outro animations
 - Responds to terminal resize
 
@@ -53,11 +54,19 @@ make uninstall
 solarust [OPTIONS]
 ```
 
-| Option   | Description                          |
-| -------- | ------------------------------------ |
-| `-p <n>` | Start with exactly `n` planets       |
-| `-s`     | Start with day/night shading enabled |
-| `-h`     | Show help and exit                   |
+| Option        | Description                                                   |
+| ------------- | ------------------------------------------------------------- |
+| `-p <n>`      | Start with exactly `n` planets                                |
+| `-s`          | Start with day/night shading enabled                          |
+| `-t <theme>`  | Color theme: `dark` (default), `light`, or `ansi`             |
+| `-h`          | Show help and exit                                            |
+
+### `-t ansi`
+
+Queries the terminal's ANSI color palette via OSC escape sequences and uses
+those colors for the planets and orbits. This means the simulation automatically
+matches any theme you have configured — Catppuccin, Dracula, Solarized, Gruvbox,
+and so on. Falls back to `dark` if the terminal does not support the query.
 
 | Key | Action                   |
 | --- | ------------------------ |
