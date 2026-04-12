@@ -85,6 +85,36 @@ impl Canvas {
         }
     }
 
+    /// Like `disc` but darkens the side facing away from the sun.
+    /// `sun_dx/sun_dy` is the vector from the planet center toward the sun.
+    fn shaded_disc(&mut self, cx: f64, cy: f64, r: f64, color: Rgb, intensity: f32,
+                   sun_dx: f64, sun_dy: f64) {
+        if r < 0.1 { return; }
+        let sun_len = (sun_dx * sun_dx + sun_dy * sun_dy).sqrt();
+        let (sdx, sdy) = if sun_len > 0.01 {
+            (sun_dx / sun_len, sun_dy / sun_len)
+        } else {
+            (1.0, 0.0)
+        };
+        let ri = r.ceil() as i32 + 1;
+        for dy in -ri..=ri {
+            for dx in -ri..=ri {
+                let d = f64::sqrt((dx * dx + dy * dy) as f64);
+                if d <= r {
+                    let alpha = if d > r - 1.0 { (1.0 - (d - (r - 1.0))) as f32 } else { 1.0 };
+                    // dot ∈ [-1, 1]: +1 = full day side, -1 = full night side
+                    let dot = if d > 0.01 {
+                        (dx as f64 / d) * sdx + (dy as f64 / d) * sdy
+                    } else { 0.0 };
+                    // Map to [0.12, 1.0] so the night side is dim but not black
+                    let shade = (0.12 + (dot + 1.0) * 0.44) as f32;
+                    self.put(cx as i32 + dx, cy as i32 + dy, color,
+                             intensity * alpha.max(0.0) * shade);
+                }
+            }
+        }
+    }
+
     fn render(&self, out: &mut impl Write) -> io::Result<()> {
         let term_rows = self.h / 2;
         let mut last_fg = (255u8, 0, 0);
@@ -158,9 +188,9 @@ fn rand_color(rng: &mut impl Rng) -> Rgb {
     palette[rng.random_range(0..palette.len())]
 }
 
-fn make_system(tw: u16, th: u16) -> Vec<Planet> {
+fn make_system(tw: u16, th: u16, fixed_count: Option<usize>) -> Vec<Planet> {
     let mut rng = rand::rng();
-    let count  = rng.random_range(3..=8usize);
+    let count  = fixed_count.unwrap_or_else(|| rng.random_range(3..=8usize));
     let lw     = tw as f64;
     let lh     = th.saturating_sub(1) as f64 * 2.0;
     let aspect = lw / lh;
@@ -191,7 +221,7 @@ fn make_system(tw: u16, th: u16) -> Vec<Planet> {
 // ── Scene drawing ─────────────────────────────────────────────────────────────
 
 /// Normal running frame.
-fn draw_running(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64) {
+fn draw_running(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, shading: bool) {
     canvas.decay();
     for p in planets {
         canvas.ellipse(cx, cy, p.orbit_rx, p.orbit_ry, (30, 30, 48), 0.50);
@@ -201,7 +231,11 @@ fn draw_running(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64) {
         let (px, py) = planet_pos(p, cx, cy, 1.0);
         let (r, g, b) = p.color;
         canvas.disc(px, py, p.size + 2.0, (r / 3, g / 3, b / 3), 0.30);
-        canvas.disc(px, py, p.size, p.color, 1.00);
+        if shading {
+            canvas.shaded_disc(px, py, p.size, p.color, 1.00, cx - px, cy - py);
+        } else {
+            canvas.disc(px, py, p.size, p.color, 1.00);
+        }
     }
 }
 
@@ -210,7 +244,7 @@ fn draw_running(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64) {
 ///   0.05 – 0.40  sun materialises
 ///   0.20 – 0.85  orbits expand from centre outward, staggered per planet
 ///   0.35 – 1.00  planets appear
-fn draw_intro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64) {
+fn draw_intro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64, shading: bool) {
     canvas.decay();
 
     // Creation flash: brief white disc from the centre
@@ -243,7 +277,11 @@ fn draw_intro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64)
             let (px, py) = planet_pos(p, cx, cy, os);
             let (r, g, b) = p.color;
             canvas.disc(px, py, p.size + 2.0, (r / 3, g / 3, b / 3), 0.30 * ps);
-            canvas.disc(px, py, p.size, p.color, ps);
+            if shading {
+                canvas.shaded_disc(px, py, p.size, p.color, ps, cx - px, cy - py);
+            } else {
+                canvas.disc(px, py, p.size, p.color, ps);
+            }
         }
     }
 }
@@ -253,7 +291,7 @@ fn draw_intro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64)
 ///   0.40 – 0.75  sun swells and brightens (mass accretion)
 ///   0.70 – 0.85  supernova shockwave expands
 ///   0.80 – 1.00  everything fades to black
-fn draw_outro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64) {
+fn draw_outro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64, shading: bool) {
     canvas.decay();
 
     // Orbits + planets shrink inward
@@ -264,7 +302,11 @@ fn draw_outro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64)
             let (px, py) = planet_pos(p, cx, cy, orbit_scale);
             let (r, g, b) = p.color;
             canvas.disc(px, py, p.size + 2.0, (r / 3, g / 3, b / 3), 0.30);
-            canvas.disc(px, py, p.size, p.color, 1.00);
+            if shading {
+                canvas.shaded_disc(px, py, p.size, p.color, 1.00, cx - px, cy - py);
+            } else {
+                canvas.disc(px, py, p.size, p.color, 1.00);
+            }
         }
     }
 
@@ -294,9 +336,15 @@ fn planet_pos(p: &Planet, cx: f64, cy: f64, orbit_scale: f64) -> (f64, f64) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 fn run(out: &mut impl Write) -> io::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut shading = args.contains(&"-s".to_string());
+    let fixed_count: Option<usize> = args.windows(2)
+        .find(|w| w[0] == "-p")
+        .and_then(|w| w[1].parse().ok());
+
     let (mut tw, mut th) = terminal::size()?;
     let mut canvas  = Canvas::new(tw, th);
-    let mut planets = make_system(tw, th);
+    let mut planets = make_system(tw, th, fixed_count);
     let mut phase   = Phase::Intro(0);
     let mut t0      = Instant::now();
 
@@ -309,15 +357,18 @@ fn run(out: &mut impl Write) -> io::Result<()> {
                         phase = Phase::Outro(0);
                     }
                 }
+                Event::Key(KeyEvent { code: KeyCode::Char('s' | 'S'), .. }) => {
+                    shading = !shading;
+                }
                 Event::Key(KeyEvent { code: KeyCode::Char('r' | 'R'), .. }) => {
-                    planets = make_system(tw, th);
+                    planets = make_system(tw, th, fixed_count);
                     canvas.reset();
                     phase = Phase::Intro(0);
                 }
                 Event::Resize(w, h) => {
                     tw = w; th = h;
                     canvas  = Canvas::new(tw, th);
-                    planets = make_system(tw, th);
+                    planets = make_system(tw, th, fixed_count);
                     phase   = Phase::Intro(0);
                 }
                 _ => {}
@@ -341,16 +392,16 @@ fn run(out: &mut impl Write) -> io::Result<()> {
         match &mut phase {
             Phase::Intro(f) => {
                 let t = *f as f64 / INTRO_FRAMES as f64;
-                draw_intro(&mut canvas, &planets, cx, cy, t);
+                draw_intro(&mut canvas, &planets, cx, cy, t, shading);
                 *f += 1;
                 if *f > INTRO_FRAMES { phase = Phase::Running; }
             }
             Phase::Running => {
-                draw_running(&mut canvas, &planets, cx, cy);
+                draw_running(&mut canvas, &planets, cx, cy, shading);
             }
             Phase::Outro(f) => {
                 let t = *f as f64 / OUTRO_FRAMES as f64;
-                draw_outro(&mut canvas, &planets, cx, cy, t);
+                draw_outro(&mut canvas, &planets, cx, cy, t, shading);
                 *f += 1;
                 if *f > OUTRO_FRAMES { return Ok(()); }
             }
@@ -362,7 +413,8 @@ fn run(out: &mut impl Write) -> io::Result<()> {
         let label = match &phase {
             Phase::Intro(_)  => "".to_string(),
             Phase::Outro(_)  => "".to_string(),
-            Phase::Running   => format!(" [q] Quit  │  [r] New system  │  {} planets ", planets.len()),
+            Phase::Running   => format!(" [q] Quit  │  [r] New system  │  [s] Shading {}  │  {} planets ",
+                                        if shading { "on " } else { "off" }, planets.len()),
         };
         queue!(out,
             cursor::MoveTo(0, th - 1),
@@ -376,6 +428,19 @@ fn run(out: &mut impl Write) -> io::Result<()> {
 }
 
 fn main() -> io::Result<()> {
+    if std::env::args().any(|a| a == "-h" || a == "--help") {
+        println!("Usage: solarust [OPTIONS]\n");
+        println!("Options:");
+        println!("  -p <n>   Start with exactly n planets (default: random 3–8)");
+        println!("  -s       Start with day/night shading enabled");
+        println!("  -h       Show this help message\n");
+        println!("Keys:");
+        println!("  q        Quit");
+        println!("  r        New system");
+        println!("  s        Toggle day/night shading");
+        return Ok(());
+    }
+
     let mut out = io::stdout();
     terminal::enable_raw_mode()?;
     execute!(out, terminal::EnterAlternateScreen, cursor::Hide)?;

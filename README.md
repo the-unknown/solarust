@@ -2,7 +2,11 @@
 
 A random solar system simulator that runs entirely in your terminal.
 
+default
 ![Demo](demo.gif)
+
+with shaded planets
+![Demo Shades](demo-2.gif)
 
 ---
 
@@ -13,6 +17,8 @@ A random solar system simulator that runs entirely in your terminal.
 - Elliptical orbits that adapt to your terminal's aspect ratio
 - Rendered with Unicode half-block characters (`▀`) for smooth, pixel-style graphics
 - Phosphor-glow trails via per-frame intensity decay
+- Day/night shading: the side of each planet facing away from the sun is darkened
+- Planet and orbit sizes scale with terminal dimensions
 - Intro and supernova outro animations
 - Responds to terminal resize
 
@@ -44,13 +50,20 @@ make uninstall
 ## Usage
 
 ```bash
-solarust
+solarust [OPTIONS]
 ```
 
-| Key | Action              |
-| --- | ------------------- |
-| `q` | Quit                |
-| `r` | Generate new system |
+| Option   | Description                          |
+| -------- | ------------------------------------ |
+| `-p <n>` | Start with exactly `n` planets       |
+| `-s`     | Start with day/night shading enabled |
+| `-h`     | Show help and exit                   |
+
+| Key | Action                   |
+| --- | ------------------------ |
+| `q` | Quit                     |
+| `r` | Generate new system      |
+| `s` | Toggle day/night shading |
 
 ## Building manually
 
