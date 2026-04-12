@@ -24,7 +24,7 @@ A random solar system simulator that runs entirely in your terminal.
 ## Installation
 
 ```bash
-git clone https://github.com/yourname/solarust
+git clone https://github.com/the-unknown/solarust
 cd solarust
 make && make install
 ```
@@ -48,7 +48,7 @@ solarust
 ```
 
 | Key | Action              |
-|-----|---------------------|
+| --- | ------------------- |
 | `q` | Quit                |
 | `r` | Generate new system |
 
