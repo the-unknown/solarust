@@ -72,24 +72,38 @@ fn query_terminal_theme() -> Option<Theme> {
     use std::io::{Read, Write};
     use std::os::unix::io::AsRawFd;
 
+    // Inside tmux, OSC sequences must be wrapped in a DCS passthrough.
+    // Each ESC (\x1b) inside the payload must be doubled.
+    // Requires `set -g allow-passthrough on` in tmux.conf (tmux ≥ 3.3).
+    let in_tmux = std::env::var("TMUX").is_ok();
+    let wrap = |seq: &str| -> String {
+        if in_tmux {
+            let escaped = seq.replace('\x1b', "\x1b\x1b");
+            format!("\x1bPtmux;\x1b{}\x1b\\", escaped)
+        } else {
+            seq.to_string()
+        }
+    };
+
     let mut tty = OpenOptions::new().read(true).write(true)
         .open("/dev/tty").ok()?;
 
     // Build one big query: OSC 11 (bg) + OSC 4 for all 16 ANSI colors
-    let mut query = "\x1b]11;?\x07".to_string();
+    let mut query = wrap("\x1b]11;?\x07");
     for i in 0..16u8 {
-        query.push_str(&format!("\x1b]4;{};?\x07", i));
+        query.push_str(&wrap(&format!("\x1b]4;{};?\x07", i)));
     }
     tty.write_all(query.as_bytes()).ok()?;
     tty.flush().ok()?;
 
-    // Set fd non-blocking, give the terminal 80 ms to respond, then drain
+    // Set fd non-blocking; allow extra time in tmux due to the extra hop
     let fd = tty.as_raw_fd();
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFL, 0);
         libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
     }
-    std::thread::sleep(Duration::from_millis(80));
+    let wait_ms = if in_tmux { 150 } else { 80 };
+    std::thread::sleep(Duration::from_millis(wait_ms));
 
     let mut raw = Vec::new();
     let mut buf = [0u8; 2048];

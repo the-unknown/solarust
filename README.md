@@ -71,6 +71,12 @@ those colors for the planets and orbits. This means the simulation automatically
 matches any theme you have configured — Catppuccin, Dracula, Solarized, Gruvbox,
 and so on. Falls back to `dark` if the terminal does not support the query.
 
+**tmux users:** OSC passthrough must be enabled in your `tmux.conf` (requires tmux ≥ 3.3):
+
+```
+set -g allow-passthrough on
+```
+
 | Key | Action                   |
 | --- | ------------------------ |
 | `q` | Quit                     |
