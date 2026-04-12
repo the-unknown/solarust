@@ -165,9 +165,13 @@ fn make_system(tw: u16, th: u16) -> Vec<Planet> {
     let lh     = th.saturating_sub(1) as f64 * 2.0;
     let aspect = lw / lh;
 
-    let max_ry = (lh / 2.0 - 6.0).min((lw / 2.0 - 8.0) / aspect);
+    let max_ry = (lh / 2.0 - 2.0).min((lw / 2.0 - 2.0) / aspect);
     let min_ry = 6.0;
     let step   = (max_ry - min_ry) / count as f64;
+
+    // Scale planet size with available orbit space so they look proportional
+    // on any terminal size.
+    let size_scale = (max_ry / 20.0).clamp(0.5, 3.5);
 
     (0..count).map(|i| {
         let base  = min_ry + step * i as f64;
@@ -179,7 +183,7 @@ fn make_system(tw: u16, th: u16) -> Vec<Planet> {
             angle:    rng.random_range(0.0..2.0 * PI),
             speed,
             color:    rand_color(&mut rng),
-            size:     rng.random_range(1.2f64..2.8),
+            size:     rng.random_range(1.2f64..2.8) * size_scale,
         }
     }).collect()
 }
