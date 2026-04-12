@@ -6,7 +6,7 @@ default
 ![Demo](demo.gif)
 
 with shaded planets
-![Demo Shades](demo-2.gif)
+![Demo Shades](demo-s.gif)
 
 ---
 
