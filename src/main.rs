@@ -329,6 +329,53 @@ impl Canvas {
         }
         Ok(())
     }
+
+    /// Like `render` but outputs rows separated by newlines instead of using
+    /// cursor::MoveTo. Safe to pipe — used by `--once` for fastfetch integration.
+    fn render_plain(&self, out: &mut impl Write) -> io::Result<()> {
+        let term_rows = self.h / 2;
+        let mut last_fg = (255u8, 0, 0);
+        let mut last_bg = (1u8, 0, 0);
+
+        for ty in 0..term_rows {
+            for tx in 0..self.w {
+                let t = self.px[(ty * 2) * self.w + tx];
+                let b = self.px[(ty * 2 + 1) * self.w + tx];
+
+                let (bg_r, bg_g, bg_b) = self.bg;
+                let blend = |p: (u8, u8, u8, f32)| -> (u8, u8, u8) {
+                    let a = p.3;
+                    if a > 0.01 {
+                        (
+                            (p.0 as f32 * a + bg_r as f32 * (1.0 - a)) as u8,
+                            (p.1 as f32 * a + bg_g as f32 * (1.0 - a)) as u8,
+                            (p.2 as f32 * a + bg_b as f32 * (1.0 - a)) as u8,
+                        )
+                    } else { (bg_r, bg_g, bg_b) }
+                };
+
+                let fg = blend(t);
+                let bg = blend(b);
+
+                if fg != last_fg || bg != last_bg {
+                    queue!(out, SetColors(Colors::new(
+                        Color::Rgb { r: fg.0, g: fg.1, b: fg.2 },
+                        Color::Rgb { r: bg.0, g: bg.1, b: bg.2 },
+                    )))?;
+                    last_fg = fg;
+                    last_bg = bg;
+                }
+                queue!(out, Print('▀'))?;
+            }
+            queue!(out, ResetColor)?;
+            last_fg = (255, 0, 0);
+            last_bg = (1, 0, 0);
+            if ty < term_rows - 1 {
+                queue!(out, Print('\n'))?;
+            }
+        }
+        Ok(())
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -612,20 +659,73 @@ fn run(out: &mut impl Write) -> io::Result<()> {
     }
 }
 
+/// Render a single static frame and write it to stdout.
+/// Used by `--once` for fastfetch / pipe integration.
+fn once_mode(
+    tw: u16, th: u16,
+    fixed_count: Option<usize>,
+    theme: &Theme,
+    shading: bool,
+) -> io::Result<()> {
+    let mut canvas = Canvas::new(tw, th, theme.bg);
+    let planets = make_system(tw, th, fixed_count, theme);
+    let cx = tw as f64 / 2.0;
+    let cy = th.saturating_sub(1) as f64;
+
+    draw_running(&mut canvas, &planets, cx, cy, shading, theme.orbit);
+
+    let mut out = io::stdout();
+    canvas.render_plain(&mut out)?;
+    execute!(out, ResetColor)?;
+    writeln!(out)?;
+    out.flush()
+}
+
 fn main() -> io::Result<()> {
-    if std::env::args().any(|a| a == "-h" || a == "--help") {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "-h" || a == "--help") {
         println!("Usage: solarust [OPTIONS]\n");
         println!("Options:");
-        println!("  -p <n>      Start with exactly n planets (default: random 3–8)");
-        println!("  -s          Start with day/night shading enabled");
-        println!("  -t <theme>  Color theme: dark (default), light, or ansi");
-        println!("              ansi: queries the terminal for its ANSI color palette");
-        println!("  -h          Show this help message\n");
+        println!("  -p <n>        Start with exactly n planets (default: random 3–8)");
+        println!("  -s            Start with day/night shading enabled");
+        println!("  -t <theme>    Color theme: dark (default), light, or ansi");
+        println!("                ansi: queries the terminal for its ANSI color palette");
+        println!("  --once        Render a single frame to stdout and exit (for fastfetch)");
+        println!("  --size <WxH>  Canvas size for --once, e.g. 60x30 (default: 60x30)");
+        println!("  -h            Show this help message\n");
         println!("Keys:");
         println!("  q        Quit");
         println!("  r        New system");
         println!("  s        Toggle day/night shading");
         return Ok(());
+    }
+
+    let shading = args.contains(&"-s".to_string());
+    let fixed_count: Option<usize> = args.windows(2)
+        .find(|w| w[0] == "-p")
+        .and_then(|w| w[1].parse().ok());
+    let theme_arg = args.windows(2)
+        .find(|w| w[0] == "-t")
+        .map(|w| w[1].as_str())
+        .unwrap_or("dark");
+    let theme = match theme_arg {
+        "light" => Theme::light(),
+        "ansi"  => Theme::from_terminal(),
+        _       => Theme::dark(),
+    };
+
+    if args.contains(&"--once".to_string()) {
+        let (tw, th) = args.windows(2)
+            .find(|w| w[0] == "--size")
+            .and_then(|w| {
+                let mut parts = w[1].splitn(2, 'x');
+                let cols = parts.next()?.parse::<u16>().ok()?;
+                let rows = parts.next()?.parse::<u16>().ok()?;
+                Some((cols, rows))
+            })
+            .unwrap_or((60, 30));
+        return once_mode(tw, th, fixed_count, &theme, shading);
     }
 
     let mut out = io::stdout();

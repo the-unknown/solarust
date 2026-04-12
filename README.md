@@ -57,12 +57,37 @@ make uninstall
 solarust [OPTIONS]
 ```
 
-| Option       | Description                                       |
-| ------------ | ------------------------------------------------- |
-| `-p <n>`     | Start with exactly `n` planets                    |
-| `-s`         | Start with day/night shading enabled              |
-| `-t <theme>` | Color theme: `dark` (default), `light`, or `ansi` |
-| `-h`         | Show help and exit                                |
+| Option         | Description                                               |
+| -------------- | --------------------------------------------------------- |
+| `-p <n>`       | Start with exactly `n` planets                            |
+| `-s`           | Start with day/night shading enabled                      |
+| `-t <theme>`   | Color theme: `dark` (default), `light`, or `ansi`         |
+| `--once`       | Render a single frame to stdout and exit (for fastfetch)  |
+| `--size <WxH>` | Canvas size for `--once`, e.g. `60x30` (default: `60x30`) |
+| `-h`           | Show help and exit                                        |
+
+### fastfetch integration
+
+Use `--once` to render a static frame suitable for piping into
+[fastfetch](https://github.com/fastfetch-cli/fastfetch):
+
+```bash
+# one-shot: render to a file, then use as logo
+solarust --once --size 60x30 > ~/.cache/solarust.ans
+fastfetch --logo-type file-raw --logo ~/.cache/solarust.ans \
+          --logo-width 60 --logo-height 29
+```
+
+Add the two lines to your shell's rc file (`.bashrc` / `.zshrc`) to get a fresh
+system each time a new terminal opens:
+
+```bash
+solarust --once --size 60x30 -t ansi > ~/.cache/solarust.ans
+fastfetch --logo-type file-raw --logo ~/.cache/solarust.ans \
+          --logo-width 60 --logo-height 29
+```
+
+![fastfetch](demo-ff.webp)
 
 ### `-t ansi`
 
