@@ -709,13 +709,20 @@ fn main() -> io::Result<()> {
         .find(|w| w[0] == "-t")
         .map(|w| w[1].as_str())
         .unwrap_or("dark");
+    let once = args.contains(&"--once".to_string());
+
+    // In --once mode there is no raw mode yet, so the terminal would echo the
+    // OSC color-query responses back as shell input.  Enable raw mode just for
+    // the duration of the query, then immediately disable it again.
+    if once && theme_arg == "ansi" { terminal::enable_raw_mode().ok(); }
     let theme = match theme_arg {
         "light" => Theme::light(),
         "ansi"  => Theme::from_terminal(),
         _       => Theme::dark(),
     };
+    if once && theme_arg == "ansi" { terminal::disable_raw_mode().ok(); }
 
-    if args.contains(&"--once".to_string()) {
+    if once {
         let (tw, th) = args.windows(2)
             .find(|w| w[0] == "--size")
             .and_then(|w| {
