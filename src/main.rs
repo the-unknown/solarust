@@ -87,6 +87,22 @@ fn query_terminal_theme() -> Option<Theme> {
 
     let mut tty = OpenOptions::new().read(true).write(true)
         .open("/dev/tty").ok()?;
+    let fd = tty.as_raw_fd();
+
+    // Temporarily disable ICANON and ECHO on the tty:
+    //  - ICANON: in canonical mode the kernel buffers input until a newline,
+    //    but OSC responses end with BEL (\x07), so they'd never be delivered
+    //    to read().
+    //  - ECHO: prevents the response bytes from being displayed on screen.
+    // This is the same effect raw mode has (and why the interactive path works)
+    // but applied surgically to our fd without going through crossterm.
+    let mut orig_termios: libc::termios = unsafe { std::mem::zeroed() };
+    unsafe { libc::tcgetattr(fd, &mut orig_termios); }
+    let mut query_termios = orig_termios;
+    query_termios.c_lflag &= !(libc::ECHO | libc::ICANON);
+    query_termios.c_cc[libc::VMIN] = 0;
+    query_termios.c_cc[libc::VTIME] = 0;
+    unsafe { libc::tcsetattr(fd, libc::TCSANOW, &query_termios); }
 
     // Build one big query: OSC 11 (bg) + OSC 4 for all 16 ANSI colors
     let mut query = wrap("\x1b]11;?\x07");
@@ -97,7 +113,6 @@ fn query_terminal_theme() -> Option<Theme> {
     tty.flush().ok()?;
 
     // Set fd non-blocking; allow extra time in tmux due to the extra hop
-    let fd = tty.as_raw_fd();
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFL, 0);
         libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
@@ -114,6 +129,12 @@ fn query_terminal_theme() -> Option<Theme> {
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
             Err(_) => break,
         }
+    }
+
+    // Restore original terminal settings and flush any late stragglers.
+    unsafe {
+        libc::tcsetattr(fd, libc::TCSANOW, &orig_termios);
+        libc::tcflush(fd, libc::TCIFLUSH);
     }
 
     parse_terminal_colors(&raw)
@@ -720,16 +741,11 @@ fn main() -> io::Result<()> {
             })
             .unwrap_or((60, 30));
 
-        // No raw mode yet in --once mode, so the terminal would echo the OSC
-        // color-query responses back as shell input.  Enable raw mode just for
-        // the duration of the query, then immediately disable it again.
-        if theme_arg == "ansi" { terminal::enable_raw_mode().ok(); }
         let theme = match theme_arg {
             "light" => Theme::light(),
             "ansi"  => Theme::from_terminal(),
             _       => Theme::dark(),
         };
-        if theme_arg == "ansi" { terminal::disable_raw_mode().ok(); }
 
         return once_mode(tw, th, fixed_count, &theme, shading);
     }
