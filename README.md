@@ -8,6 +8,9 @@ default
 with shaded planets
 ![Demo Shades](demo-s.gif)
 
+respekting terminal theme (example shows Catppuccin Mocha)
+![Demo Theme](demo-t.gif)
+
 ---
 
 ## Features
@@ -54,12 +57,12 @@ make uninstall
 solarust [OPTIONS]
 ```
 
-| Option        | Description                                                   |
-| ------------- | ------------------------------------------------------------- |
-| `-p <n>`      | Start with exactly `n` planets                                |
-| `-s`          | Start with day/night shading enabled                          |
-| `-t <theme>`  | Color theme: `dark` (default), `light`, or `ansi`             |
-| `-h`          | Show help and exit                                            |
+| Option       | Description                                       |
+| ------------ | ------------------------------------------------- |
+| `-p <n>`     | Start with exactly `n` planets                    |
+| `-s`         | Start with day/night shading enabled              |
+| `-t <theme>` | Color theme: `dark` (default), `light`, or `ansi` |
+| `-h`         | Show help and exit                                |
 
 ### `-t ansi`
 
