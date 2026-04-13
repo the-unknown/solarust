@@ -24,6 +24,7 @@ struct Theme {
     bg:      Rgb,
     orbit:   Rgb,
     planets: Vec<Rgb>,
+    default_bg: bool, // true → let terminal default background show through
 }
 
 impl Theme {
@@ -37,6 +38,7 @@ impl Theme {
                 (255, 235,  70), (255, 110, 180), (130, 130, 255),
                 (160, 255, 110),
             ],
+            default_bg: false,
         }
     }
 
@@ -50,6 +52,7 @@ impl Theme {
                 (190, 170,  20), (200,  60, 130), (80, 80, 200),
                 (100, 200,  60),
             ],
+            default_bg: false,
         }
     }
 
@@ -79,7 +82,7 @@ fn query_terminal_theme() -> Option<Theme> {
     let wrap = |seq: &str| -> String {
         if in_tmux {
             let escaped = seq.replace('\x1b', "\x1b\x1b");
-            format!("\x1bPtmux;\x1b{}\x1b\\", escaped)
+            format!("\x1bPtmux;{}\x1b\\", escaped)
         } else {
             seq.to_string()
         }
@@ -104,8 +107,15 @@ fn query_terminal_theme() -> Option<Theme> {
     query_termios.c_cc[libc::VTIME] = 0;
     unsafe { libc::tcsetattr(fd, libc::TCSANOW, &query_termios); }
 
-    // Build one big query: OSC 11 (bg) + OSC 4 for all 16 ANSI colors
-    let mut query = wrap("\x1b]11;?\x07");
+    // Build one big query: OSC 11 (bg) + OSC 4 for all 16 ANSI colors.
+    // In tmux, send OSC 11 directly (without DCS) so tmux answers with its
+    // own background color. OSC 4 goes via DCS passthrough to the outer
+    // terminal for the palette.
+    let mut query = if in_tmux {
+        "\x1b]11;?\x07".to_string()
+    } else {
+        wrap("\x1b]11;?\x07")
+    };
     for i in 0..16u8 {
         query.push_str(&wrap(&format!("\x1b]4;{};?\x07", i)));
     }
@@ -117,7 +127,7 @@ fn query_terminal_theme() -> Option<Theme> {
         let flags = libc::fcntl(fd, libc::F_GETFL, 0);
         libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
     }
-    let wait_ms = if in_tmux { 150 } else { 80 };
+    let wait_ms = if in_tmux { 200 } else { 80 };
     std::thread::sleep(Duration::from_millis(wait_ms));
 
     let mut raw = Vec::new();
@@ -137,7 +147,49 @@ fn query_terminal_theme() -> Option<Theme> {
         libc::tcflush(fd, libc::TCIFLUSH);
     }
 
+    // In tmux, responses may arrive wrapped in DCS passthrough with doubled
+    // ESC bytes.  Strip the wrappers so the OSC parser sees plain responses.
+    let raw = if in_tmux { strip_dcs_passthrough(&raw) } else { raw };
+
     parse_terminal_colors(&raw)
+}
+
+/// Strip tmux DCS passthrough wrappers from terminal responses.
+/// Responses may arrive as `ESC P tmux; <payload-with-doubled-ESC> ESC \`.
+/// This extracts the inner payloads and un-doubles the ESC bytes.
+fn strip_dcs_passthrough(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        // Detect DCS start: ESC P
+        if i + 1 < data.len() && data[i] == 0x1b && data[i + 1] == b'P' {
+            i += 2;
+            // Skip past "tmux;" prefix if present
+            if data[i..].starts_with(b"tmux;") {
+                i += 5;
+            }
+            // Extract payload until ST (ESC \)
+            while i < data.len() {
+                if i + 1 < data.len() && data[i] == 0x1b && data[i + 1] == b'\\' {
+                    i += 2; // skip ST
+                    break;
+                }
+                // Un-double ESC bytes
+                if i + 1 < data.len() && data[i] == 0x1b && data[i + 1] == 0x1b {
+                    out.push(0x1b);
+                    i += 2;
+                } else {
+                    out.push(data[i]);
+                    i += 1;
+                }
+            }
+        } else {
+            // Pass through non-DCS bytes unchanged
+            out.push(data[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Parse OSC 4 / OSC 11 responses.
@@ -173,7 +225,9 @@ fn parse_terminal_colors(data: &[u8]) -> Option<Theme> {
 
     if found < 6 { return None; }
 
-    // Use OSC 11 bg if available; fall back to ANSI 0
+    // Use OSC 11 bg if available; fall back to ANSI palette[0].
+    // In tmux, OSC 11 is skipped (tmux's value doesn't match the rendered
+    // background), so palette[0] is used as the blend target.
     let bg = term_bg.unwrap_or(palette[0]);
 
     // Orbit: blend ANSI 8 (bright-black) with bg for a subtle ring
@@ -187,7 +241,7 @@ fn parse_terminal_colors(data: &[u8]) -> Option<Theme> {
         .collect();
     if planets.is_empty() { return None; }
 
-    Some(Theme { bg, orbit, planets })
+    Some(Theme { bg, orbit, planets, default_bg: true })
 }
 
 fn parse_rgb(s: &str) -> Option<Rgb> {
@@ -228,13 +282,14 @@ struct Canvas {
     h: usize, // = (term_rows − 1) × 2
     px: Vec<(u8, u8, u8, f32)>,
     bg: Rgb,
+    default_bg: bool, // true → use Color::Reset for bg pixels (terminal default)
 }
 
 impl Canvas {
     fn new(tw: u16, th: u16, bg: Rgb) -> Self {
         let w = tw as usize;
         let h = th.saturating_sub(1) as usize * 2;
-        Canvas { w, h, px: vec![(0, 0, 0, 0.0); w * h], bg }
+        Canvas { w, h, px: vec![(0, 0, 0, 0.0); w * h], bg, default_bg: false }
     }
 
     fn reset(&mut self) { self.px.fill((0, 0, 0, 0.0)); }
@@ -313,8 +368,9 @@ impl Canvas {
 
     fn render(&self, out: &mut impl Write) -> io::Result<()> {
         let term_rows = self.h / 2;
-        let mut last_fg = (255u8, 0, 0);
-        let mut last_bg = (1u8, 0, 0);
+        let bg_rgb = self.bg;
+        let use_reset = self.default_bg;
+        let mut last: Option<(Color, Color, char)> = None;
 
         for ty in 0..term_rows {
             queue!(out, cursor::MoveTo(0, ty as u16))?;
@@ -322,30 +378,55 @@ impl Canvas {
                 let t = self.px[(ty * 2) * self.w + tx];
                 let b = self.px[(ty * 2 + 1) * self.w + tx];
 
-                let (bg_r, bg_g, bg_b) = self.bg;
-                let blend = |p: (u8, u8, u8, f32)| -> (u8, u8, u8) {
+                let (bg_r, bg_g, bg_b) = bg_rgb;
+                let blend = |p: (u8, u8, u8, f32)| -> ((u8, u8, u8), bool) {
                     let a = p.3;
                     if a > 0.01 {
-                        (
+                        ((
                             (p.0 as f32 * a + bg_r as f32 * (1.0 - a)) as u8,
                             (p.1 as f32 * a + bg_g as f32 * (1.0 - a)) as u8,
                             (p.2 as f32 * a + bg_b as f32 * (1.0 - a)) as u8,
-                        )
-                    } else { (bg_r, bg_g, bg_b) }
+                        ), false)
+                    } else { ((bg_r, bg_g, bg_b), true) }
                 };
 
-                let fg = blend(t);
-                let bg = blend(b);
+                let (fg, fg_is_bg) = blend(t);
+                let (bg, bg_is_bg) = blend(b);
 
-                if fg != last_fg || bg != last_bg {
-                    queue!(out, SetColors(Colors::new(
-                        Color::Rgb { r: fg.0, g: fg.1, b: fg.2 },
-                        Color::Rgb { r: bg.0, g: bg.1, b: bg.2 },
-                    )))?;
-                    last_fg = fg;
-                    last_bg = bg;
+                if use_reset && fg_is_bg && bg_is_bg {
+                    let cur = (Color::Reset, Color::Reset, ' ');
+                    if last.map_or(true, |l| l != cur) {
+                        queue!(out, ResetColor)?;
+                        last = Some(cur);
+                    }
+                    queue!(out, Print(' '))?;
+                } else if use_reset && fg_is_bg {
+                    // Top half is bg → use '▄' so fg=content(bottom), bg=reset
+                    let cur = (Color::Rgb { r: bg.0, g: bg.1, b: bg.2 },
+                               Color::Reset, '▄');
+                    if last.map_or(true, |l| l != cur) {
+                        queue!(out, SetColors(Colors::new(cur.0, cur.1)))?;
+                        last = Some(cur);
+                    }
+                    queue!(out, Print('▄'))?;
+                } else if use_reset && bg_is_bg {
+                    // Bottom half is bg → use '▀' so fg=content(top), bg=reset
+                    let cur = (Color::Rgb { r: fg.0, g: fg.1, b: fg.2 },
+                               Color::Reset, '▀');
+                    if last.map_or(true, |l| l != cur) {
+                        queue!(out, SetColors(Colors::new(cur.0, cur.1)))?;
+                        last = Some(cur);
+                    }
+                    queue!(out, Print('▀'))?;
+                } else {
+                    let cur = (Color::Rgb { r: fg.0, g: fg.1, b: fg.2 },
+                               Color::Rgb { r: bg.0, g: bg.1, b: bg.2 }, '▀');
+                    if last.map_or(true, |l| l != cur) {
+                        queue!(out, SetColors(Colors::new(cur.0, cur.1)))?;
+                        last = Some(cur);
+                    }
+                    queue!(out, Print('▀'))?;
                 }
-                queue!(out, Print('▀'))?;
             }
         }
         Ok(())
@@ -355,42 +436,65 @@ impl Canvas {
     /// cursor::MoveTo. Safe to pipe — used by `--once` for fastfetch integration.
     fn render_plain(&self, out: &mut impl Write) -> io::Result<()> {
         let term_rows = self.h / 2;
-        let mut last_fg = (255u8, 0, 0);
-        let mut last_bg = (1u8, 0, 0);
+        let bg_rgb = self.bg;
+        let use_reset = self.default_bg;
+        let mut last: Option<(Color, Color, char)> = None;
 
         for ty in 0..term_rows {
             for tx in 0..self.w {
                 let t = self.px[(ty * 2) * self.w + tx];
                 let b = self.px[(ty * 2 + 1) * self.w + tx];
 
-                let (bg_r, bg_g, bg_b) = self.bg;
-                let blend = |p: (u8, u8, u8, f32)| -> (u8, u8, u8) {
+                let (bg_r, bg_g, bg_b) = bg_rgb;
+                let blend = |p: (u8, u8, u8, f32)| -> ((u8, u8, u8), bool) {
                     let a = p.3;
                     if a > 0.01 {
-                        (
+                        ((
                             (p.0 as f32 * a + bg_r as f32 * (1.0 - a)) as u8,
                             (p.1 as f32 * a + bg_g as f32 * (1.0 - a)) as u8,
                             (p.2 as f32 * a + bg_b as f32 * (1.0 - a)) as u8,
-                        )
-                    } else { (bg_r, bg_g, bg_b) }
+                        ), false)
+                    } else { ((bg_r, bg_g, bg_b), true) }
                 };
 
-                let fg = blend(t);
-                let bg = blend(b);
+                let (fg, fg_is_bg) = blend(t);
+                let (bg, bg_is_bg) = blend(b);
 
-                if fg != last_fg || bg != last_bg {
-                    queue!(out, SetColors(Colors::new(
-                        Color::Rgb { r: fg.0, g: fg.1, b: fg.2 },
-                        Color::Rgb { r: bg.0, g: bg.1, b: bg.2 },
-                    )))?;
-                    last_fg = fg;
-                    last_bg = bg;
+                if use_reset && fg_is_bg && bg_is_bg {
+                    let cur = (Color::Reset, Color::Reset, ' ');
+                    if last.map_or(true, |l| l != cur) {
+                        queue!(out, ResetColor)?;
+                        last = Some(cur);
+                    }
+                    queue!(out, Print(' '))?;
+                } else if use_reset && fg_is_bg {
+                    let cur = (Color::Rgb { r: bg.0, g: bg.1, b: bg.2 },
+                               Color::Reset, '▄');
+                    if last.map_or(true, |l| l != cur) {
+                        queue!(out, SetColors(Colors::new(cur.0, cur.1)))?;
+                        last = Some(cur);
+                    }
+                    queue!(out, Print('▄'))?;
+                } else if use_reset && bg_is_bg {
+                    let cur = (Color::Rgb { r: fg.0, g: fg.1, b: fg.2 },
+                               Color::Reset, '▀');
+                    if last.map_or(true, |l| l != cur) {
+                        queue!(out, SetColors(Colors::new(cur.0, cur.1)))?;
+                        last = Some(cur);
+                    }
+                    queue!(out, Print('▀'))?;
+                } else {
+                    let cur = (Color::Rgb { r: fg.0, g: fg.1, b: fg.2 },
+                               Color::Rgb { r: bg.0, g: bg.1, b: bg.2 }, '▀');
+                    if last.map_or(true, |l| l != cur) {
+                        queue!(out, SetColors(Colors::new(cur.0, cur.1)))?;
+                        last = Some(cur);
+                    }
+                    queue!(out, Print('▀'))?;
                 }
-                queue!(out, Print('▀'))?;
             }
             queue!(out, ResetColor)?;
-            last_fg = (255, 0, 0);
-            last_bg = (1, 0, 0);
+            last = None;
             if ty < term_rows - 1 {
                 queue!(out, Print('\n'))?;
             }
@@ -597,6 +701,7 @@ fn run(out: &mut impl Write) -> io::Result<()> {
 
     let (mut tw, mut th) = terminal::size()?;
     let mut canvas  = Canvas::new(tw, th, theme.bg);
+    canvas.default_bg = theme.default_bg;
     let mut planets = make_system(tw, th, fixed_count, &theme);
     let mut phase   = Phase::Intro(0);
     let mut t0      = Instant::now();
@@ -621,6 +726,7 @@ fn run(out: &mut impl Write) -> io::Result<()> {
                 Event::Resize(w, h) => {
                     tw = w; th = h;
                     canvas  = Canvas::new(tw, th, theme.bg);
+                    canvas.default_bg = theme.default_bg;
                     planets = make_system(tw, th, fixed_count, &theme);
                     phase   = Phase::Intro(0);
                 }
@@ -689,6 +795,7 @@ fn once_mode(
     shading: bool,
 ) -> io::Result<()> {
     let mut canvas = Canvas::new(tw, th, theme.bg);
+    canvas.default_bg = theme.default_bg;
     let planets = make_system(tw, th, fixed_count, theme);
     let cx = tw as f64 / 2.0;
     let cy = th.saturating_sub(1) as f64;
