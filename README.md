@@ -33,6 +33,32 @@ respekting terminal theme (example shows Catppuccin Mocha)
 
 ## Installation
 
+### Pre-built packages
+
+Download the latest package for your distribution from the
+[GitHub Releases](https://github.com/the-unknown/solarust/releases) page:
+
+| Distribution     | Package                               | Install command                            |
+| ---------------- | ------------------------------------- | ------------------------------------------ |
+| Debian / Ubuntu  | `solarust_<version>_amd64.deb`        | `sudo dpkg -i solarust_*.deb`             |
+| Fedora / RHEL    | `solarust-<version>-1.x86_64.rpm`     | `sudo rpm -i solarust-*.rpm`              |
+| Arch Linux       | `solarust-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U solarust-*.pkg.tar.zst` |
+| Any Linux        | `solarust-<version>-x86_64-linux.tar.gz`  | Extract and copy binary to your `$PATH`  |
+
+### Arch Linux (AUR)
+
+solarust is available in the [AUR](https://aur.archlinux.org/packages/solarust):
+
+```bash
+# with your preferred AUR helper, e.g.:
+yay -S solarust
+# or manually:
+git clone https://aur.archlinux.org/solarust.git
+cd solarust && makepkg -si
+```
+
+### From source
+
 ```bash
 git clone https://github.com/the-unknown/solarust
 cd solarust
