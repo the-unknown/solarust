@@ -166,7 +166,8 @@ jobs:
           chown -R builder:builder .
           su builder -c "makepkg --printsrcinfo > .SRCINFO"
 
-          # Commit and push
+          # Commit and push (safe.directory needed after chown to builder)
+          git config --global safe.directory /tmp/solarust-aur
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add PKGBUILD .SRCINFO
