@@ -3,8 +3,28 @@ name = "solarust"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
+description = "A terminal animation of a randomly generated solar system"
+homepage = "https://github.com/the-unknown/solarust"
+repository = "https://github.com/the-unknown/solarust"
 
 [dependencies]
 crossterm = "0.28"
 rand = "0.9"
 libc = "0.2"
+
+[package.metadata.deb]
+maintainer = "Matthias Schlich"
+section = "games"
+priority = "optional"
+assets = [
+    ["target/release/solarust", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/solarust/", "644"],
+    ["LICENSE", "usr/share/doc/solarust/", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/solarust", dest = "/usr/bin/solarust", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/solarust/README.md", mode = "644" },
+    { source = "LICENSE", dest = "/usr/share/doc/solarust/LICENSE", mode = "644" },
+]
