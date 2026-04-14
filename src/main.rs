@@ -535,22 +535,52 @@ fn rand_color(rng: &mut impl Rng, palette: &[Rgb]) -> Rgb {
     palette[rng.random_range(0..palette.len())]
 }
 
-fn make_system(tw: u16, th: u16, fixed_count: Option<usize>, theme: &Theme) -> Vec<Planet> {
+fn make_system(tw: u16, th: u16, fixed_count: Option<usize>, theme: &Theme) -> (Vec<Planet>, f64) {
     let mut rng = rand::rng();
-    let count  = fixed_count.unwrap_or_else(|| rng.random_range(3..=8usize));
     let lw     = tw as f64;
     let lh     = th.saturating_sub(1) as f64 * 2.0;
     let aspect = lw / lh;
 
     let max_ry = (lh / 2.0 - 2.0).min((lw / 2.0 - 2.0) / aspect);
-    let min_ry = 6.0;
-    let step   = (max_ry - min_ry) / count as f64;
 
-    // Scale planet size with available orbit space so they look proportional
-    // on any terminal size.
+    // Scale planet + sun size with available orbit space so they look
+    // proportional on any terminal size. Same factor is applied to the sun
+    // (via sun_scale returned below) so the sun always stays larger than
+    // the planets regardless of window size.
     let size_scale = (max_ry / 20.0).clamp(0.5, 3.5);
 
-    (0..count).map(|i| {
+    // Innermost orbit must sit outside the sun's outer glow (7.0 * size_scale).
+    let min_ry = (7.0 * size_scale + 2.0).min(max_ry - 1.0);
+    let ring_space = (max_ry - min_ry).max(1.0);
+
+    // Desired minimum orbit spacing so planets at their natural size don't
+    // overlap between rings.
+    let desired_step = 2.0 * size_scale + 1.0;
+
+    // Auto-pick count only when the user didn't request a specific number.
+    // If -p N was given, honor it and let the size clamp below handle crowding.
+    let count = match fixed_count {
+        Some(n) => n,
+        None => {
+            let requested = rng.random_range(3..=8usize);
+            let max_fit   = ((ring_space / desired_step) as usize).max(3);
+            requested.min(max_fit)
+        }
+    };
+    let step = ring_space / count as f64;
+
+    // Planet radius scales both with window size and planet count: fewer
+    // planets → smaller natural size (they'd look cartoonish otherwise),
+    // more planets → larger natural size (must stay visible when crowded).
+    // Capped by ring gap so crowding doesn't blow past adjacent orbits too
+    // far (still allowed to exceed step/2 slightly so -p 8 stays readable).
+    let natural_r   = size_scale * (1.2 + count as f64 * 0.5);
+    let max_planet_r = natural_r.min(step * 1.35).max(1.5);
+    let min_planet_r = (max_planet_r * 0.4).max(1.0);
+
+    // Planet upper bound (2.0) kept well below the sun's bright core
+    // radius (3.2 * size_scale) so planets are always visibly smaller.
+    let planets = (0..count).map(|i| {
         let base  = min_ry + step * i as f64;
         let ry    = (base + rng.random_range(-step * 0.15..step * 0.15)).max(min_ry);
         let speed = 0.030 / (ry / min_ry).sqrt() * rng.random_range(0.6f64..1.4);
@@ -560,20 +590,22 @@ fn make_system(tw: u16, th: u16, fixed_count: Option<usize>, theme: &Theme) -> V
             angle:    rng.random_range(0.0..2.0 * PI),
             speed,
             color:    rand_color(&mut rng, &theme.planets),
-            size:     rng.random_range(1.2f64..2.8) * size_scale,
+            size:     rng.random_range(min_planet_r..max_planet_r),
         }
-    }).collect()
+    }).collect();
+
+    (planets, size_scale)
 }
 
 // ── Scene drawing ─────────────────────────────────────────────────────────────
 
 /// Normal running frame.
-fn draw_running(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, shading: bool, orbit_color: Rgb) {
+fn draw_running(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, shading: bool, orbit_color: Rgb, sun_scale: f64) {
     canvas.decay();
     for p in planets {
         canvas.ellipse(cx, cy, p.orbit_rx, p.orbit_ry, orbit_color, 0.50);
     }
-    draw_sun(canvas, cx, cy, 1.0, 0.0);
+    draw_sun(canvas, cx, cy, sun_scale, 0.0);
     for p in planets {
         let (px, py) = planet_pos(p, cx, cy, 1.0);
         let (r, g, b) = p.color;
@@ -591,7 +623,7 @@ fn draw_running(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, shadi
 ///   0.05 – 0.40  sun materialises
 ///   0.20 – 0.85  orbits expand from centre outward, staggered per planet
 ///   0.35 – 1.00  planets appear
-fn draw_intro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64, shading: bool, orbit_color: Rgb) {
+fn draw_intro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64, shading: bool, orbit_color: Rgb, sun_scale: f64) {
     canvas.decay();
 
     // Creation flash: brief white disc from the centre
@@ -603,7 +635,7 @@ fn draw_intro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64,
 
     // Sun
     let sun_s = smoothstep(0.05, 0.45, t);
-    draw_sun(canvas, cx, cy, sun_s, 0.0);
+    draw_sun(canvas, cx, cy, sun_s * sun_scale, 0.0);
 
     // Orbits + planets staggered
     let n = planets.len().max(1) as f64;
@@ -638,7 +670,7 @@ fn draw_intro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64,
 ///   0.40 – 0.75  sun swells and brightens (mass accretion)
 ///   0.70 – 0.85  supernova shockwave expands
 ///   0.80 – 1.00  everything fades to black
-fn draw_outro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64, shading: bool, orbit_color: Rgb) {
+fn draw_outro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64, shading: bool, orbit_color: Rgb, base_sun_scale: f64) {
     canvas.decay();
 
     // Orbits + planets shrink inward
@@ -662,7 +694,7 @@ fn draw_outro(canvas: &mut Canvas, planets: &[Planet], cx: f64, cy: f64, t: f64,
     let collapse = smoothstep(0.70, 0.82, t);         // shrinks back to 0
     let sun_scale = (1.0 + swell * 0.70) * (1.0 - collapse);
     let boost     = (swell * 0.8) as f32;
-    draw_sun(canvas, cx, cy, sun_scale, boost);
+    draw_sun(canvas, cx, cy, sun_scale * base_sun_scale, boost);
 
     // Supernova shockwave
     if t > 0.70 {
@@ -702,7 +734,7 @@ fn run(out: &mut impl Write) -> io::Result<()> {
     let (mut tw, mut th) = terminal::size()?;
     let mut canvas  = Canvas::new(tw, th, theme.bg);
     canvas.default_bg = theme.default_bg;
-    let mut planets = make_system(tw, th, fixed_count, &theme);
+    let (mut planets, mut sun_scale) = make_system(tw, th, fixed_count, &theme);
     let mut phase   = Phase::Intro(0);
     let mut t0      = Instant::now();
 
@@ -719,7 +751,7 @@ fn run(out: &mut impl Write) -> io::Result<()> {
                     shading = !shading;
                 }
                 Event::Key(KeyEvent { code: KeyCode::Char('r' | 'R'), .. }) => {
-                    planets = make_system(tw, th, fixed_count, &theme);
+                    (planets, sun_scale) = make_system(tw, th, fixed_count, &theme);
                     canvas.reset();
                     phase = Phase::Intro(0);
                 }
@@ -727,7 +759,7 @@ fn run(out: &mut impl Write) -> io::Result<()> {
                     tw = w; th = h;
                     canvas  = Canvas::new(tw, th, theme.bg);
                     canvas.default_bg = theme.default_bg;
-                    planets = make_system(tw, th, fixed_count, &theme);
+                    (planets, sun_scale) = make_system(tw, th, fixed_count, &theme);
                     phase   = Phase::Intro(0);
                 }
                 _ => {}
@@ -751,16 +783,16 @@ fn run(out: &mut impl Write) -> io::Result<()> {
         match &mut phase {
             Phase::Intro(f) => {
                 let t = *f as f64 / INTRO_FRAMES as f64;
-                draw_intro(&mut canvas, &planets, cx, cy, t, shading, theme.orbit);
+                draw_intro(&mut canvas, &planets, cx, cy, t, shading, theme.orbit, sun_scale);
                 *f += 1;
                 if *f > INTRO_FRAMES { phase = Phase::Running; }
             }
             Phase::Running => {
-                draw_running(&mut canvas, &planets, cx, cy, shading, theme.orbit);
+                draw_running(&mut canvas, &planets, cx, cy, shading, theme.orbit, sun_scale);
             }
             Phase::Outro(f) => {
                 let t = *f as f64 / OUTRO_FRAMES as f64;
-                draw_outro(&mut canvas, &planets, cx, cy, t, shading, theme.orbit);
+                draw_outro(&mut canvas, &planets, cx, cy, t, shading, theme.orbit, sun_scale);
                 *f += 1;
                 if *f > OUTRO_FRAMES { return Ok(()); }
             }
@@ -796,11 +828,11 @@ fn once_mode(
 ) -> io::Result<()> {
     let mut canvas = Canvas::new(tw, th, theme.bg);
     canvas.default_bg = theme.default_bg;
-    let planets = make_system(tw, th, fixed_count, theme);
+    let (planets, sun_scale) = make_system(tw, th, fixed_count, theme);
     let cx = tw as f64 / 2.0;
     let cy = th.saturating_sub(1) as f64;
 
-    draw_running(&mut canvas, &planets, cx, cy, shading, theme.orbit);
+    draw_running(&mut canvas, &planets, cx, cy, shading, theme.orbit, sun_scale);
 
     let mut out = io::stdout();
     canvas.render_plain(&mut out)?;
