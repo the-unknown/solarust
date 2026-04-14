@@ -107,38 +107,55 @@ fn query_terminal_theme() -> Option<Theme> {
     query_termios.c_cc[libc::VTIME] = 0;
     unsafe { libc::tcsetattr(fd, libc::TCSANOW, &query_termios); }
 
-    // Build one big query: OSC 11 (bg) + OSC 4 for all 16 ANSI colors.
-    // In tmux, send OSC 11 directly (without DCS) so tmux answers with its
-    // own background color. OSC 4 goes via DCS passthrough to the outer
-    // terminal for the palette.
-    let mut query = if in_tmux {
-        "\x1b]11;?\x07".to_string()
-    } else {
-        wrap("\x1b]11;?\x07")
-    };
-    for i in 0..16u8 {
-        query.push_str(&wrap(&format!("\x1b]4;{};?\x07", i)));
-    }
-    tty.write_all(query.as_bytes()).ok()?;
-    tty.flush().ok()?;
-
-    // Set fd non-blocking; allow extra time in tmux due to the extra hop
-    unsafe {
-        let flags = libc::fcntl(fd, libc::F_GETFL, 0);
-        libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
-    }
-    let wait_ms = if in_tmux { 200 } else { 80 };
-    std::thread::sleep(Duration::from_millis(wait_ms));
-
-    let mut raw = Vec::new();
-    let mut buf = [0u8; 2048];
-    loop {
-        match tty.read(&mut buf) {
-            Ok(0)  => break,
-            Ok(n)  => raw.extend_from_slice(&buf[..n]),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-            Err(_) => break,
+    // Keep fd blocking for writes; VMIN=0 VTIME=0 (set above) makes reads
+    // return Ok(0) immediately when no data is available, so we poll with
+    // short sleeps instead of O_NONBLOCK (which would break write_all).
+    //
+    // Helper: write one query, poll-read until "rgb:" seen or timeout.
+    // Under tmux, batched OSC 4 queries lose most replies — tmux's DCS
+    // passthrough only reliably round-trips one request/response at a time
+    // (see /tmp/tmux.sh reference). Sending serially fixes that.
+    let mut raw: Vec<u8> = Vec::new();
+    let mut query_one = |q: &str, timeout_ms: u64| {
+        if tty.write_all(q.as_bytes()).is_err() { return; }
+        let _ = tty.flush();
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        let start_len = raw.len();
+        let mut buf = [0u8; 2048];
+        loop {
+            match tty.read(&mut buf) {
+                Ok(0) => {
+                    if Instant::now() >= deadline { break; }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Ok(n) => {
+                    raw.extend_from_slice(&buf[..n]);
+                    if raw[start_len..].windows(4).any(|w| w == b"rgb:") {
+                        // Drain trailing bytes of this reply briefly.
+                        let drain_until = Instant::now() + Duration::from_millis(5);
+                        while Instant::now() < drain_until {
+                            match tty.read(&mut buf) {
+                                Ok(0) => { std::thread::sleep(Duration::from_millis(1)); }
+                                Ok(n) => raw.extend_from_slice(&buf[..n]),
+                                Err(_) => break,
+                            }
+                        }
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
         }
+    };
+
+    // OSC 11 (bg). In tmux, answer comes from tmux itself (no DCS needed).
+    let bg_q = if in_tmux { "\x1b]11;?\x07".to_string() } else { wrap("\x1b]11;?\x07") };
+    query_one(&bg_q, if in_tmux { 100 } else { 80 });
+
+    // OSC 4 palette, one color at a time.
+    for i in 0..16u8 {
+        let q = wrap(&format!("\x1b]4;{};?\x07", i));
+        query_one(&q, if in_tmux { 80 } else { 40 });
     }
 
     // Restore original terminal settings and flush any late stragglers.
