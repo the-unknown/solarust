@@ -1,0 +1,14 @@
+#!/bin/bash
+# Commit message linter for Conventional Commits
+commit_msg_file=$1
+commit_msg=$(cat "$commit_msg_file")
+
+# Conventional Commits regex pattern
+pattern="^(feat|fix|docs|style|refactor|perf|test|chore|ci|build|revert)(\(.+\))?!?: .+"
+
+if [[ ! $commit_msg =~ $pattern ]]; then
+  echo "Error: Invalid commit message format."
+  echo "Please follow Conventional Commits: https://www.conventionalcommits.org/"
+  echo "Example: 'feat: add new feature' or 'fix(scope): fix bug'"
+  exit 1
+fi

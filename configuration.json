@@ -1,0 +1,34 @@
+{
+  "categories": [
+    {
+      "title": "## 🚀 Features",
+      "labels": ["feature", "feat"],
+      "commits": ["feat"]
+    },
+    {
+      "title": "## 🐛 Bug Fixes",
+      "labels": ["fix", "bug"],
+      "commits": ["fix"]
+    },
+    {
+      "title": "## 🧪 Tests",
+      "labels": ["test"],
+      "commits": ["test"]
+    },
+    {
+      "title": "## 📝 Documentation",
+      "labels": ["docs"],
+      "commits": ["docs"]
+    },
+    {
+      "title": "## 🧹 Chores & Refactoring",
+      "labels": ["chore", "refactor", "style"],
+      "commits": ["chore", "refactor", "style"]
+    }
+  ],
+  "ignore_labels": ["ignore"],
+  "template": "${{CHANGELOG}}",
+  "tag_resolver": {
+    "method": "semver"
+  }
+}

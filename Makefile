@@ -10,6 +10,10 @@ BINDIR  = $(PREFIX)/bin
 
 all: build
 
+setup:
+	cp scripts/commit-msg .git/hooks/commit-msg
+	chmod +x .git/hooks/commit-msg
+
 build:
 	cargo build --release
 
