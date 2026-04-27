@@ -57,6 +57,45 @@ git clone https://aur.archlinux.org/solarust.git
 cd solarust && makepkg -si
 ```
 
+### Nix (flake)
+
+Run without installing:
+
+```bash
+nix run github:the-unknown/solarust
+```
+
+Install into your profile:
+
+```bash
+nix profile install github:the-unknown/solarust
+```
+
+Build locally from a clone:
+
+```bash
+git clone https://github.com/the-unknown/solarust
+cd solarust
+nix build
+./result/bin/solarust
+```
+
+Use as a NixOS / home-manager flake input:
+
+```nix
+{
+  inputs.solarust.url = "github:the-unknown/solarust";
+  # then add `solarust.packages.${system}.default` to your packages
+}
+```
+
+Dev shell options:
+
+```bash
+nix develop          # default shell
+nix develop .#full   # adds rust-analyzer
+```
+
 ### From source
 
 ```bash
